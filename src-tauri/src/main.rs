@@ -33,7 +33,7 @@ use tauri_plugin_log::{Target, TargetKind};
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 const SAVE_PROBE: Duration = Duration::from_secs(30);
 
-/// Where the main window was when it was last destroyed, so the window built to replace it can match.
+/// Where the main window was when it was last hidden, so the window built to replace it can match.
 #[cfg(target_os = "linux")]
 struct WindowGeometry {
 	position: tauri::LogicalPosition<f64>,
@@ -52,9 +52,13 @@ fn show_window(app: &AppHandle) -> Result<(), tauri::Error> {
 	}
 
 	// On Linux (Wayland), a window that has been hidden and shown again has a titlebar that no longer reacts to
-	// clicks or hover. Hiding therefore destroys the window (see `hide_window`), and showing builds a fresh one.
+	// clicks or hover, so a hidden window is replaced by a fresh one when shown. The hidden one is kept until then
+	// because the frontend renders the key images sent to the device, so it must stay alive in the background.
 	#[cfg(target_os = "linux")]
-	if app.get_webview_window("main").is_none() {
+	if !is_window_shown(app) {
+		if let Some(old) = app.get_webview_window("main") {
+			old.destroy()?;
+		}
 		let config = app.config().app.windows.first().ok_or(tauri::Error::WebviewNotFound)?.clone();
 		// Apply the previous geometry through the builder, like the config does, rather than moving the window
 		// once it exists: changing it before the window is first shown brings the dead titlebar back.
@@ -83,6 +87,7 @@ fn hide_window(app: &AppHandle) -> Result<(), tauri::Error> {
 
 	#[cfg(target_os = "linux")]
 	{
+		// Remember where the window was for the one that replaces it when shown.
 		if let (Ok(position), Ok(size), Ok(maximized), Ok(scale)) = (window.outer_position(), window.inner_size(), window.is_maximized(), window.scale_factor()) {
 			*LAST_GEOMETRY.lock().unwrap() = Some(WindowGeometry {
 				position: position.to_logical(scale),
@@ -90,9 +95,7 @@ fn hide_window(app: &AppHandle) -> Result<(), tauri::Error> {
 				maximized,
 			});
 		}
-		window.destroy()?;
 	}
-	#[cfg(not(target_os = "linux"))]
 	window.hide()?;
 
 	#[cfg(target_os = "macos")]
@@ -437,7 +440,7 @@ If you have already donated, thank you so much for your support!"#,
 	};
 
 	app.run(|app, event| {
-		// On Linux the main window is destroyed when sent to the background, which must not exit the app.
+		// On Linux the main window is destroyed and rebuilt when shown, which must not exit the app.
 		#[cfg(target_os = "linux")]
 		if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
 			api.prevent_exit();

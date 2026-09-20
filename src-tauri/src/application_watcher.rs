@@ -16,12 +16,6 @@ pub static APPLICATION_PROFILES: LazyLock<RwLock<Store<ApplicationProfiles>>> = 
 pub static APPLICATION_PROCESSES: LazyLock<RwLock<HashMap<String, Vec<u32>>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
 pub static APPLICATION_PLUGINS: LazyLock<RwLock<HashMap<String, Vec<String>>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
-#[derive(Clone, serde::Serialize)]
-pub struct SwitchProfileEvent {
-	device: String,
-	profile: String,
-}
-
 async fn on_active_application(app_name: String) {
 	let app_handle = crate::APP_HANDLE.get().unwrap();
 
@@ -44,14 +38,7 @@ async fn on_active_application(app_name: String) {
 		if crate::store::profiles::DEVICE_STORES.write().await.get_selected_profile(device).ok().as_ref() == Some(profile) {
 			continue;
 		}
-		let _ = app_handle.emit_to(
-			"main",
-			"switch_profile",
-			SwitchProfileEvent {
-				device: device.clone(),
-				profile: profile.clone(),
-			},
-		);
+		let _ = crate::events::frontend::profiles::switch_profile(app_handle, device.clone(), profile.clone()).await;
 	}
 }
 
