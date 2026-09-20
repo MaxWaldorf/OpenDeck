@@ -1,6 +1,6 @@
 use super::{ContextEvent, PayloadEvent};
 
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use serde::{Deserialize, Serialize};
 
@@ -50,8 +50,7 @@ pub struct SwitchProfileEvent {
 
 pub async fn switch_profile(event: SwitchProfileEvent) -> Result<(), anyhow::Error> {
 	let app_handle = crate::APP_HANDLE.get().unwrap();
-	app_handle.emit_to("main", "switch_profile", event)?;
-	Ok(())
+	crate::events::frontend::profiles::switch_profile(app_handle, event.device, event.profile).await
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -62,6 +61,20 @@ pub struct DeviceBrightnessEvent {
 
 pub async fn device_brightness(event: DeviceBrightnessEvent) -> Result<(), anyhow::Error> {
 	let app_handle = crate::APP_HANDLE.get().unwrap();
-	app_handle.emit_to("main", "device_brightness", event)?;
+	// The frontend applies the change and saves the settings, but it does not exist while the main window is in
+	// the background, so the backend has to do it directly then.
+	if app_handle.get_webview_window("main").is_some() {
+		app_handle.emit_to("main", "device_brightness", event)?;
+		return Ok(());
+	}
+
+	let mut settings = crate::store::get_settings().value;
+	let brightness = match event.action.as_str() {
+		"increase" => settings.brightness as i16 + event.value as i16,
+		"decrease" => settings.brightness as i16 - event.value as i16,
+		_ => event.value as i16,
+	};
+	settings.brightness = brightness.clamp(0, 100) as u8;
+	crate::events::frontend::settings::set_settings(app_handle.clone(), settings).await?;
 	Ok(())
 }

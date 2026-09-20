@@ -3,7 +3,7 @@ use super::Error;
 use crate::shared::DEVICES;
 use crate::store::profiles::{PROFILE_STORES, acquire_locks_mut, get_device_profiles, save_profile_now};
 
-use tauri::{AppHandle, Emitter, command};
+use tauri::{AppHandle, Emitter, Manager, command};
 
 #[command]
 pub fn get_profiles(device: &str) -> Result<Vec<String>, Error> {
@@ -99,6 +99,25 @@ pub async fn rename_profile(device: String, old_id: String, new_id: String, reta
 	locks.profile_stores.rename_profile(&DEVICES.get(&device).unwrap(), &old_id, &new_id, retain).await?;
 
 	Ok(())
+}
+
+/// Switches a device's profile on behalf of the backend (application watcher, plugins).
+///
+/// The frontend normally performs the switch so its UI stays in sync, but it does not exist while the main window
+/// is in the background, so the backend has to do it directly then.
+pub async fn switch_profile(app: &AppHandle, device: String, profile: String) -> Result<(), anyhow::Error> {
+	if app.get_webview_window("main").is_some() {
+		app.emit_to("main", "switch_profile", SwitchProfileEvent { device, profile })?;
+	} else {
+		set_selected_profile(device, profile).await?;
+	}
+	Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct SwitchProfileEvent {
+	device: String,
+	profile: String,
 }
 
 pub async fn rerender_images(app: &AppHandle) -> Result<(), anyhow::Error> {
