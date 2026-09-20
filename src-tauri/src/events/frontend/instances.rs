@@ -3,7 +3,7 @@ use super::Error;
 use crate::shared::{Action, ActionContext, ActionInstance, ActionState, Context, config_dir};
 use crate::store::profiles::{LocksMut, acquire_locks, acquire_locks_mut, get_instance_mut, get_slot, get_slot_mut, save_profile_now};
 
-use tauri::{AppHandle, Emitter, Manager, command};
+use tauri::{AppHandle, Emitter, command};
 use tokio::fs::remove_dir_all;
 
 #[command]
@@ -216,8 +216,8 @@ struct UpdateStateEvent {
 }
 
 pub async fn update_state(app: &AppHandle, context: ActionContext, locks: &mut LocksMut<'_>) -> Result<(), anyhow::Error> {
-	let window = app.get_webview_window("main").unwrap();
-	window.emit(
+	app.emit_to(
+		"main",
 		"update_state",
 		UpdateStateEvent {
 			contents: get_instance_mut(&context, locks).await?.cloned(),
@@ -309,7 +309,6 @@ struct KeyMovedEvent {
 }
 
 pub async fn key_moved(app: &AppHandle, context: Context, pressed: bool) -> Result<(), anyhow::Error> {
-	let window = app.get_webview_window("main").unwrap();
-	window.emit("key_moved", KeyMovedEvent { context, pressed })?;
+	app.emit_to("main", "key_moved", KeyMovedEvent { context, pressed })?;
 	Ok(())
 }

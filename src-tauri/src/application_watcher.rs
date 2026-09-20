@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 use tokio::sync::RwLock;
 
 pub type ApplicationProfiles = HashMap<String, HashMap<String, String>>;
@@ -29,7 +29,7 @@ async fn on_active_application(app_name: String) {
 		let mut applications = APPLICATIONS.write().await;
 		if !applications.contains(&app_name) && !app_name.to_lowercase().starts_with(&crate::shared::PRODUCT_NAME.to_lowercase()) && !app_name.trim().is_empty() {
 			applications.push(app_name.clone());
-			let _ = app_handle.get_webview_window("main").unwrap().emit("applications", applications.clone());
+			let _ = app_handle.emit_to("main", "applications", applications.clone());
 		}
 	}
 
@@ -44,7 +44,8 @@ async fn on_active_application(app_name: String) {
 		if crate::store::profiles::DEVICE_STORES.write().await.get_selected_profile(device).ok().as_ref() == Some(profile) {
 			continue;
 		}
-		let _ = app_handle.get_webview_window("main").unwrap().emit(
+		let _ = app_handle.emit_to(
+			"main",
 			"switch_profile",
 			SwitchProfileEvent {
 				device: device.clone(),

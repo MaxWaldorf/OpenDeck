@@ -33,6 +33,17 @@ use tauri_plugin_log::{Target, TargetKind};
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 const SAVE_PROBE: Duration = Duration::from_secs(30);
 
+/// Where the main window was when it was last destroyed, so the window built to replace it can match.
+#[cfg(target_os = "linux")]
+struct WindowGeometry {
+	position: tauri::LogicalPosition<f64>,
+	size: tauri::LogicalSize<f64>,
+	maximized: bool,
+}
+
+#[cfg(target_os = "linux")]
+static LAST_GEOMETRY: std::sync::Mutex<Option<WindowGeometry>> = std::sync::Mutex::new(None);
+
 fn show_window(app: &AppHandle) -> Result<(), tauri::Error> {
 	#[cfg(target_os = "macos")]
 	{
@@ -40,12 +51,48 @@ fn show_window(app: &AppHandle) -> Result<(), tauri::Error> {
 		let _ = app.set_activation_policy(ActivationPolicy::Regular);
 	}
 
-	let window = app.get_webview_window("main").ok_or_else(|| tauri::Error::WebviewNotFound)?;
-	window.show().and_then(|_| window.set_focus())
+	// On Linux (Wayland), a window that has been hidden and shown again has a titlebar that no longer reacts to
+	// clicks or hover. Hiding therefore destroys the window (see `hide_window`), and showing builds a fresh one.
+	#[cfg(target_os = "linux")]
+	if app.get_webview_window("main").is_none() {
+		let config = app.config().app.windows.first().ok_or(tauri::Error::WebviewNotFound)?.clone();
+		// Apply the previous geometry through the builder, like the config does, rather than moving the window
+		// once it exists: changing it before the window is first shown brings the dead titlebar back.
+		let mut builder = tauri::WebviewWindowBuilder::from_config(app, &config)?;
+		if let Some(geometry) = LAST_GEOMETRY.lock().unwrap().take() {
+			builder = builder
+				.inner_size(geometry.size.width, geometry.size.height)
+				.position(geometry.position.x, geometry.position.y)
+				.maximized(geometry.maximized);
+		}
+		builder.build()?;
+	}
+
+	let window = app.get_webview_window("main").ok_or(tauri::Error::WebviewNotFound)?;
+	window.show()?;
+	window.set_focus()
+}
+
+/// Whether the main window currently exists and is on screen.
+pub fn is_window_shown(app: &AppHandle) -> bool {
+	app.get_webview_window("main").is_some_and(|window| window.is_visible().unwrap_or(false))
 }
 
 fn hide_window(app: &AppHandle) -> Result<(), tauri::Error> {
-	let window = app.get_webview_window("main").ok_or_else(|| tauri::Error::WebviewNotFound)?;
+	let window = app.get_webview_window("main").ok_or(tauri::Error::WebviewNotFound)?;
+
+	#[cfg(target_os = "linux")]
+	{
+		if let (Ok(position), Ok(size), Ok(maximized), Ok(scale)) = (window.outer_position(), window.inner_size(), window.is_maximized(), window.scale_factor()) {
+			*LAST_GEOMETRY.lock().unwrap() = Some(WindowGeometry {
+				position: position.to_logical(scale),
+				size: size.to_logical(scale),
+				maximized,
+			});
+		}
+		window.destroy()?;
+	}
+	#[cfg(not(target_os = "linux"))]
 	window.hide()?;
 
 	#[cfg(target_os = "macos")]
@@ -236,8 +283,7 @@ If you have already donated, thank you so much for your support!"#,
 						}
 
 						let app_handle = icon.app_handle();
-						let window = app_handle.get_webview_window("main").unwrap();
-						let _ = if window.is_visible().unwrap_or(false) { hide_window(app_handle) } else { show_window(app_handle) };
+						let _ = if is_window_shown(app_handle) { hide_window(app_handle) } else { show_window(app_handle) };
 					}
 				})
 				.on_menu_event(move |app, event| {
@@ -377,8 +423,8 @@ If you have already donated, thank you so much for your support!"#,
 			}
 			if let WindowEvent::CloseRequested { api, .. } = event {
 				if store::get_settings().value.background {
-					let _ = hide_window(window.app_handle());
 					api.prevent_close();
+					let _ = hide_window(window.app_handle());
 				} else {
 					window.app_handle().exit(0);
 				}
@@ -391,6 +437,12 @@ If you have already donated, thank you so much for your support!"#,
 	};
 
 	app.run(|app, event| {
+		// On Linux the main window is destroyed when sent to the background, which must not exit the app.
+		#[cfg(target_os = "linux")]
+		if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
+			api.prevent_exit();
+		}
+
 		if let tauri::RunEvent::Exit = event {
 			#[cfg(windows)]
 			futures::executor::block_on(plugins::deactivate_plugins());

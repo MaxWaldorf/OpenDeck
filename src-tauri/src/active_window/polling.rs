@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use active_win_pos_rs::get_active_window;
-use tauri::Manager;
 use tokio::sync::mpsc;
 
 /// Interval while profiles are configured, so switching stays responsive.
@@ -16,7 +15,7 @@ pub async fn run(tx: mpsc::Sender<String>) {
 	let mut previous: Option<String> = None;
 	loop {
 		let has_profiles = !crate::application_watcher::APPLICATION_PROFILES.read().await.value.is_empty();
-		let window_visible = app_handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false);
+		let window_visible = crate::is_window_shown(app_handle);
 
 		// Each call can be expensive (on KDE Wayland it opens D-Bus connections and loads a KWin script),
 		// so skip it entirely when neither profile switching nor the UI needs the result.
